@@ -1,109 +1,111 @@
-// A CSS class for the floating ghost suggestion
+/** A CSS class for the floating ghost suggestion */
 const GHOST_CLASS = "autotab-ghost-overlay";
 
-// Map each textarea to its stored data: { userText, suggestion, originalText, cachedResponse }
+/** Stores text area states */
 const textAreaData = new Map();
 
-// API request debouncing
+/** Debounce timers to prevent excessive API calls */
 const debounceTimers = new Map();
-const DEBOUNCE_DELAY = 1500;
 
-// Minimum text length required for AI suggestions
+/** Configuration */
+const DEBOUNCE_DELAY = 1500;
 const MIN_TEXT_LENGTH = 10;
 
-console.log("[AutoTab] Content script started.");
+/** Initialize AutoTab on page load */
+function initializeAutoTab() {
+    console.log("[AutoTab] Initializing extension...");
 
-// 1. Select all existing textareas (no dynamic detection)
-const textareas = document.querySelectorAll("textarea");
-console.log(`[AutoTab] Found ${textareas.length} <textarea> elements.`);
+    // Attach AutoTab to all existing textareas
+    attachAutoTabToExistingTextareas();
 
-// 2. Attach AI autocomplete logic to each textarea
-textareas.forEach((textarea, index) => {
-    console.log(`[AutoTab] Attaching to textarea #${index + 1}.`);
+    // Observe dynamic textareas added to the DOM
+    observeDynamicTextareas();
+}
 
-    // Initialize data structure
+/** Finds all existing textareas on the page and attaches AutoTab */
+function attachAutoTabToExistingTextareas() {
+    console.log("[AutoTab] Attaching to existing textareas...");
+    document.querySelectorAll("textarea").forEach(attachAutoTab);
+}
+
+/** Observes dynamically added textareas and attaches AutoTab */
+function observeDynamicTextareas() {
+    const observer = new MutationObserver((mutations) => {
+        mutations.forEach((mutation) => {
+            mutation.addedNodes.forEach((node) => {
+                if (node.nodeType === 1 && node.tagName === "TEXTAREA") {
+                    console.log("[AutoTab] New textarea detected:", node);
+                    attachAutoTab(node);
+                }
+            });
+        });
+    });
+
+    observer.observe(document.body, {childList: true, subtree: true});
+    console.log("[AutoTab] Now observing dynamic textareas...");
+}
+
+/** Attaches AutoTab functionality to a given textarea */
+function attachAutoTab(textarea) {
+    if (textAreaData.has(textarea)) return; // Prevent duplicate listeners
+
+    console.log("[AutoTab] Attaching AutoTab to:", textarea);
+
+    // Initialize storage
     textAreaData.set(textarea, {
         userText: textarea.value || "",
         suggestion: "",
-        originalText: "", // for undo (Ctrl+Z)
+        originalText: "",
+        cachedResponse: null,
     });
 
-    // Listen for user input with debouncing
-    textarea.addEventListener("input", () => {
-        const userText = textarea.value;
-        console.log("[AutoTab] User typed:", userText);
+    // Attach event listeners
+    attachTextareaListeners(textarea);
+}
 
-        // Update the map
-        textAreaData.get(textarea).userText = userText;
+/** Attaches all event listeners to a textarea */
+function attachTextareaListeners(textarea) {
+    textarea.addEventListener("input", () => handleUserInput(textarea));
+    textarea.addEventListener("keydown", (e) => handleKeydown(e, textarea));
+    textarea.addEventListener("scroll", () => updateGhostOverlayPosition(textarea));
+    new ResizeObserver(() => updateGhostOverlayPosition(textarea)).observe(textarea);
+}
 
-        // Apply input validation before requesting suggestions
-        if (!isValidInput(userText)) {
-            console.log("[AutoTab] Skipping AI request (invalid input).");
-            removeGhostOverlay(textarea);
-            textAreaData.get(textarea).suggestion = "";
-            return;
-        }
+/** Handles user input, debouncing AI requests */
+function handleUserInput(textarea) {
+    const userText = textarea.value.trim();
+    console.log("[AutoTab] User typed:", userText);
 
-        // Debounce API calls
-        clearTimeout(debounceTimers.get(textarea));
-        // Set new timer
-        const timer = setTimeout(() => {
-            requestAISuggestion(textarea, userText);
-        }, DEBOUNCE_DELAY);
-        debounceTimers.set(textarea, timer);
-    });
+    textAreaData.get(textarea).userText = userText;
 
-    // Listen for keydown to handle Tab acceptance & Ctrl+Z revert
-    textarea.addEventListener("keydown", (e) => {
-        // Tab => accept suggestion if valid
-        if (e.key === "Tab") {
-            const {suggestion, userText} = textAreaData.get(textarea);
-
-            // Must have a suggestion that extends userText
-            if (suggestion) {
-                console.log("[AutoTab] Tab pressed, accepting suggestion:", suggestion);
-                e.preventDefault();
-
-                // Store the user's original text before we fill
-                textAreaData.get(textarea).originalText = userText;
-
-                // Fill in the suggestion
-                textarea.value = userText + suggestion;
-
-                // Remove overlay
-                removeGhostOverlay(textarea);
-            }
-        }
-
-        // Ctrl+Z => revert to originalText
-        if (e.ctrlKey && (e.key === "z" || e.key === "Z")) {
-            const {originalText} = textAreaData.get(textarea);
-            if (originalText) {
-                console.log("[AutoTab] Ctrl+Z pressed, reverting to:", originalText);
-                e.preventDefault();
-
-                // Restore the user's text
-                textarea.value = originalText;
-                textAreaData.get(textarea).originalText = ""; // clear once used
-                // Remove any overlay
-                removeGhostOverlay(textarea);
-            }
-        }
-    });
-
-    // Optionally request an initial suggestion if there's existing text
-    if (textarea.value) {
-        requestAISuggestion(textarea, textarea.value);
+    if (!isValidInput(userText)) {
+        console.log("[AutoTab] Invalid input, skipping AI request.");
+        removeGhostOverlay(textarea);
+        textAreaData.get(textarea).suggestion = "";
+        return;
     }
-});
 
-/**
- * requestAISuggestion
- * Sends user text to the background script to get an AI-generated completion.
- * Uses caching to avoid redundant requests.
- * @param {HTMLTextAreaElement} textarea
- * @param {string} userText
- */
+    // Debounce AI request
+    clearTimeout(debounceTimers.get(textarea));
+    debounceTimers.set(textarea, setTimeout(() => {
+        requestAISuggestion(textarea, userText);
+    }, DEBOUNCE_DELAY));
+}
+
+/** Handles key events: Tab (accept suggestion), Ctrl+Z (undo) */
+function handleKeydown(event, textarea) {
+    if (event.key === "Tab") {
+        event.preventDefault();
+        acceptSuggestion(textarea);
+    }
+
+    if (event.ctrlKey && (event.key === "z" || event.key === "Z")) {
+        event.preventDefault();
+        undoSuggestion(textarea);
+    }
+}
+
+/** Requests AI suggestion for a textarea */
 function requestAISuggestion(textarea, userText) {
     if (!userText) {
         removeGhostOverlay(textarea);
@@ -111,35 +113,62 @@ function requestAISuggestion(textarea, userText) {
         return;
     }
 
-    console.log("[AutoTab] Requesting AI suggestion for text:", userText);
+    console.log("[AutoTab] Checking cache for:", userText);
 
-    // Check if we already have a cached response for this text
     if (textAreaData.get(textarea).cachedResponse === userText) {
         console.log("[AutoTab] Using cached AI suggestion.");
-        const cachedSuggestion = textAreaData.get(textarea).suggestion;
-        showGhostOverlay(textarea, cachedSuggestion);
+        showGhostOverlay(textarea, textAreaData.get(textarea).suggestion);
         return;
     }
 
-    chrome.runtime.sendMessage(
-        {action: "generate_suggestion", text: userText},
-        (response) => {
-            if (response && response.suggestion) {
-                console.log("[AutoTab] AI suggestion received:", response.suggestion);
-                // Store the suggestion
-                textAreaData.get(textarea).suggestion = response.suggestion;
-                textAreaData.get(textarea).cachedResponse = userText;
+    console.log("[AutoTab] Requesting AI suggestion for:", userText);
 
-                // Display the ghost overlay
-                showGhostOverlay(textarea, response.suggestion);
-            } else {
-                console.warn("[AutoTab] No suggestion or AI error encountered.");
-                // Clear any existing suggestion
-                textAreaData.get(textarea).suggestion = "";
-                removeGhostOverlay(textarea);
+    try {
+        chrome.runtime.sendMessage(
+            {action: "generate_suggestion", text: userText},
+            (response) => {
+                if (chrome.runtime.lastError) {
+                    console.error("[AutoTab] Chrome runtime error:", chrome.runtime.lastError.message);
+                    return;
+                }
+
+                if (response && response.suggestion) {
+                    console.log("[AutoTab] AI suggestion received:", response.suggestion);
+                    textAreaData.get(textarea).suggestion = response.suggestion;
+                    textAreaData.get(textarea).cachedResponse = userText;
+                    showGhostOverlay(textarea, response.suggestion);
+                } else {
+                    console.warn("[AutoTab] No suggestion received.");
+                    textAreaData.get(textarea).suggestion = "";
+                    removeGhostOverlay(textarea);
+                }
             }
-        }
-    );
+        );
+    } catch (error) {
+        console.error("[AutoTab] Failed to send message:", error);
+    }
+}
+
+/** Accepts the AI suggestion when the user presses "Tab" */
+function acceptSuggestion(textarea) {
+    const {suggestion, userText} = textAreaData.get(textarea);
+    if (!suggestion) return;
+
+    console.log("[AutoTab] Tab pressed, accepting suggestion:", suggestion);
+    textAreaData.get(textarea).originalText = userText;
+    textarea.value = userText + suggestion;
+    removeGhostOverlay(textarea);
+}
+
+/** Reverts text to original when the user presses "Ctrl+Z" */
+function undoSuggestion(textarea) {
+    const {originalText} = textAreaData.get(textarea);
+    if (!originalText) return;
+
+    console.log("[AutoTab] Ctrl+Z pressed, reverting to:", originalText);
+    textarea.value = originalText;
+    textAreaData.get(textarea).originalText = "";
+    removeGhostOverlay(textarea);
 }
 
 /**
@@ -178,7 +207,6 @@ function showGhostOverlay(textarea, suggestion) {
     const overlay = document.createElement("div");
     overlay.className = GHOST_CLASS;
 
-    const style = window.getComputedStyle(textarea);
     overlay.style.position = "absolute";
     overlay.style.zIndex = "9999";
     overlay.style.top = rect.top + window.scrollY + "px";
@@ -186,6 +214,7 @@ function showGhostOverlay(textarea, suggestion) {
     overlay.style.width = rect.width + "px";
     overlay.style.height = rect.height + "px";
 
+    const style = window.getComputedStyle(textarea);
     overlay.style.fontFamily = style.fontFamily;
     overlay.style.fontSize = style.fontSize;
     overlay.style.lineHeight = style.lineHeight;
@@ -194,6 +223,7 @@ function showGhostOverlay(textarea, suggestion) {
     overlay.style.margin = style.margin;
     overlay.style.border = style.border;
     overlay.style.borderRadius = style.borderRadius;
+
     overlay.style.color = "rgba(0,0,0,0.3)";
     overlay.style.whiteSpace = "pre-wrap";
     overlay.style.pointerEvents = "none";
@@ -207,7 +237,21 @@ function showGhostOverlay(textarea, suggestion) {
     // Store a unique ID to tie this overlay to the textarea
     textarea.dataset.overlayId = Math.random().toString(36).slice(2);
     overlay.dataset.refId = textarea.dataset.overlayId;
-    console.log("[AutoTab] Ghost overlay displayed for text:", userText);
+}
+
+/** Updates overlay position on textarea resize/scroll */
+function updateGhostOverlayPosition(textarea) {
+    const overlayId = textarea.dataset.overlayId;
+    if (!overlayId) return;
+
+    const overlay = document.querySelector(`.${GHOST_CLASS}[data-ref-id="${overlayId}"]`);
+    if (!overlay) return;
+
+    const rect = textarea.getBoundingClientRect();
+    overlay.style.top = rect.top + window.scrollY + "px";
+    overlay.style.left = rect.left + window.scrollX + "px";
+    overlay.style.width = rect.width + "px";
+    overlay.style.height = rect.height + "px";
 }
 
 /**
@@ -225,3 +269,6 @@ function removeGhostOverlay(textarea) {
         }
     });
 }
+
+// Start the extension
+initializeAutoTab();
