@@ -1,8 +1,8 @@
 /** A CSS class for the floating ghost suggestion */
 const GHOST_CLASS = "autotab-ghost-overlay";
 
-/** Stores text area states */
-const textAreaData = new Map();
+/** Stores input and text area states */
+const inputData = new Map();
 
 /** Debounce timers to prevent excessive API calls */
 const debounceTimers = new Map();
@@ -15,26 +15,26 @@ const MIN_TEXT_LENGTH = 10;
 function initializeAutoTab() {
     console.log("[AutoTab] Initializing extension...");
 
-    // Attach AutoTab to all existing textareas
-    attachAutoTabToExistingTextareas();
+    // Attach AutoTab to all existing input and textarea elements
+    attachAutoTabToExistingElements();
 
-    // Observe dynamic textareas added to the DOM
-    observeDynamicTextareas();
+    // Observe dynamic input and textarea elements added to the DOM
+    observeDynamicElements();
 }
 
-/** Finds all existing textareas on the page and attaches AutoTab */
-function attachAutoTabToExistingTextareas() {
-    console.log("[AutoTab] Attaching to existing textareas...");
-    document.querySelectorAll("textarea").forEach(attachAutoTab);
+/** Finds all existing input and textarea elements on the page and attaches AutoTab */
+function attachAutoTabToExistingElements() {
+    console.log("[AutoTab] Attaching to existing inputs and textareas...");
+    document.querySelectorAll("textarea, input[type='text']").forEach(attachAutoTab);
 }
 
-/** Observes dynamically added textareas and attaches AutoTab */
-function observeDynamicTextareas() {
+/** Observes dynamically added input and textarea elements and attaches AutoTab */
+function observeDynamicElements() {
     const observer = new MutationObserver((mutations) => {
         mutations.forEach((mutation) => {
             mutation.addedNodes.forEach((node) => {
-                if (node.nodeType === 1 && node.tagName === "TEXTAREA") {
-                    console.log("[AutoTab] New textarea detected:", node);
+                if (node.nodeType === 1 && (node.tagName === "TEXTAREA" || (node.tagName === "INPUT" && node.type === "text"))) {
+                    console.log("[AutoTab] New input/textarea detected:", node);
                     attachAutoTab(node);
                 }
             });
@@ -42,82 +42,82 @@ function observeDynamicTextareas() {
     });
 
     observer.observe(document.body, {childList: true, subtree: true});
-    console.log("[AutoTab] Now observing dynamic textareas...");
+    console.log("[AutoTab] Now observing dynamic inputs and textareas...");
 }
 
-/** Attaches AutoTab functionality to a given textarea */
-function attachAutoTab(textarea) {
-    if (textAreaData.has(textarea)) return; // Prevent duplicate listeners
+/** Attaches AutoTab functionality to a given input or textarea */
+function attachAutoTab(element) {
+    if (inputData.has(element)) return; // Prevent duplicate listeners
 
-    console.log("[AutoTab] Attaching AutoTab to:", textarea);
+    console.log("[AutoTab] Attaching AutoTab to:", element);
 
     // Initialize storage
-    textAreaData.set(textarea, {
-        userText: textarea.value || "",
+    inputData.set(element, {
+        userText: element.value || "",
         suggestion: "",
         originalText: "",
         cachedResponse: null,
     });
 
     // Attach event listeners
-    attachTextareaListeners(textarea);
+    attachElementListeners(element);
 }
 
-/** Attaches all event listeners to a textarea */
-function attachTextareaListeners(textarea) {
-    textarea.addEventListener("input", () => handleUserInput(textarea));
-    textarea.addEventListener("keydown", (e) => handleKeydown(e, textarea));
-    textarea.addEventListener("scroll", () => updateGhostOverlayPosition(textarea));
-    new ResizeObserver(() => updateGhostOverlayPosition(textarea)).observe(textarea);
+/** Attaches all event listeners to an input or textarea */
+function attachElementListeners(element) {
+    element.addEventListener("input", () => handleUserInput(element));
+    element.addEventListener("keydown", (e) => handleKeydown(e, element));
+    element.addEventListener("scroll", () => updateGhostOverlayPosition(element));
+    new ResizeObserver(() => updateGhostOverlayPosition(element)).observe(element);
 }
 
 /** Handles user input, debouncing AI requests */
-function handleUserInput(textarea) {
-    const userText = textarea.value.trim();
+function handleUserInput(element) {
+    const userText = element.value.trim();
     console.log("[AutoTab] User typed:", userText);
 
-    textAreaData.get(textarea).userText = userText;
+    inputData.get(element).userText = userText;
 
     if (!isValidInput(userText)) {
         console.log("[AutoTab] Invalid input, skipping AI request.");
-        removeGhostOverlay(textarea);
-        textAreaData.get(textarea).suggestion = "";
+        removeGhostOverlay(element);
+        inputData.get(element).suggestion = "";
         return;
     }
 
     // Debounce AI request
-    clearTimeout(debounceTimers.get(textarea));
-    debounceTimers.set(textarea, setTimeout(() => {
-        requestAISuggestion(textarea, userText);
+    clearTimeout(debounceTimers.get(element));
+    debounceTimers.set(element, setTimeout(() => {
+        requestAISuggestion(element, userText);
     }, DEBOUNCE_DELAY));
 }
 
 /** Handles key events: Tab (accept suggestion), Ctrl+Z (undo) */
-function handleKeydown(event, textarea) {
+function handleKeydown(event, element) {
     if (event.key === "Tab") {
         event.preventDefault();
-        acceptSuggestion(textarea);
+        acceptSuggestion(element);
     }
 
     if (event.ctrlKey && (event.key === "z" || event.key === "Z")) {
         event.preventDefault();
-        undoSuggestion(textarea);
+        undoSuggestion(element);
     }
 }
 
-/** Requests AI suggestion for a textarea */
-function requestAISuggestion(textarea, userText) {
+/** Requests AI suggestion for an input */
+function requestAISuggestion(element, userText) {
     if (!userText) {
-        removeGhostOverlay(textarea);
-        textAreaData.get(textarea).suggestion = "";
+        removeGhostOverlay(element);
+        inputData.get(element).suggestion = "";
         return;
     }
 
     console.log("[AutoTab] Checking cache for:", userText);
 
-    if (textAreaData.get(textarea).cachedResponse === userText) {
+    if (inputData.get(element).cachedResponse === userText) {
         console.log("[AutoTab] Using cached AI suggestion.");
-        showGhostOverlay(textarea, textAreaData.get(textarea).suggestion);
+        showGhostOverlay(element, inputData.get(element).suggestion);
         return;
     }
 
@@ -134,13 +134,13 @@ function requestAISuggestion(textarea, userText) {
 
                 if (response && response.suggestion) {
                     console.log("[AutoTab] AI suggestion received:", response.suggestion);
-                    textAreaData.get(textarea).suggestion = response.suggestion;
-                    textAreaData.get(textarea).cachedResponse = userText;
-                    showGhostOverlay(textarea, response.suggestion);
+                    inputData.get(element).suggestion = response.suggestion;
+                    inputData.get(element).cachedResponse = userText;
+                    showGhostOverlay(element, response.suggestion);
                 } else {
                     console.warn("[AutoTab] No suggestion received.");
-                    textAreaData.get(textarea).suggestion = "";
-                    removeGhostOverlay(textarea);
+                    inputData.get(element).suggestion = "";
+                    removeGhostOverlay(element);
                 }
             }
         );
@@ -150,25 +150,25 @@ function requestAISuggestion(textarea, userText) {
 }
 
 /** Accepts the AI suggestion when the user presses "Tab" */
-function acceptSuggestion(textarea) {
-    const {suggestion, userText} = textAreaData.get(textarea);
+function acceptSuggestion(element) {
+    const {suggestion, userText} = inputData.get(element);
     if (!suggestion) return;
 
     console.log("[AutoTab] Tab pressed, accepting suggestion:", suggestion);
-    textAreaData.get(textarea).originalText = userText;
-    textarea.value = userText + suggestion;
-    removeGhostOverlay(textarea);
+    inputData.get(element).originalText = userText;
+    element.value = userText + suggestion;
+    removeGhostOverlay(element);
 }
 
 /** Reverts text to original when the user presses "Ctrl+Z" */
-function undoSuggestion(textarea) {
-    const {originalText} = textAreaData.get(textarea);
+function undoSuggestion(element) {
+    const {originalText} = inputData.get(element);
     if (!originalText) return;
 
     console.log("[AutoTab] Ctrl+Z pressed, reverting to:", originalText);
-    textarea.value = originalText;
-    textAreaData.get(textarea).originalText = "";
-    removeGhostOverlay(textarea);
+    element.value = originalText;
+    inputData.get(element).originalText = "";
+    removeGhostOverlay(element);
 }
 
 /**
@@ -195,26 +195,27 @@ function isValidInput(text) {
 }
 
 /**
- * Positions a floating overlay on top of the textarea to display ghost text.
+ * Positions a floating overlay on top of the element to display ghost text.
  */
-function showGhostOverlay(textarea, suggestion) {
-    removeGhostOverlay(textarea);
+function showGhostOverlay(element, suggestion) {
+    removeGhostOverlay(element);
 
-    const data = textAreaData.get(textarea);
+    const data = inputData.get(element);
     const userText = data.userText || "";
 
-    const rect = textarea.getBoundingClientRect();
     const overlay = document.createElement("div");
     overlay.className = GHOST_CLASS;
 
+    // Apply text styles from the input field
+    const style = window.getComputedStyle(element);
     overlay.style.position = "absolute";
     overlay.style.zIndex = "9999";
-    overlay.style.top = rect.top + window.scrollY + "px";
-    overlay.style.left = rect.left + window.scrollX + "px";
-    overlay.style.width = rect.width + "px";
-    overlay.style.height = rect.height + "px";
+    overlay.style.opacity = "0.3";
+    overlay.style.whiteSpace = "pre-wrap";
+    overlay.style.pointerEvents = "none";
+    overlay.style.overflow = "hidden";
+    overlay.style.backgroundColor = "transparent";
 
-    const style = window.getComputedStyle(textarea);
     overlay.style.fontFamily = style.fontFamily;
     overlay.style.fontSize = style.fontSize;
     overlay.style.lineHeight = style.lineHeight;
@@ -223,42 +224,40 @@ function showGhostOverlay(textarea, suggestion) {
     overlay.style.margin = style.margin;
     overlay.style.border = style.border;
     overlay.style.borderRadius = style.borderRadius;
-
-    overlay.style.color = "rgba(0,0,0,0.3)";
-    overlay.style.whiteSpace = "pre-wrap";
-    overlay.style.pointerEvents = "none";
-    overlay.style.overflow = "hidden";
-    overlay.style.backgroundColor = "transparent";
-
+    overlay.style.color = style.color;
     overlay.textContent = userText + suggestion;
 
-    document.body.appendChild(overlay);
+    updateGhostOverlayPosition(element, overlay);
 
-    // Store a unique ID to tie this overlay to the textarea
-    textarea.dataset.overlayId = Math.random().toString(36).slice(2);
-    overlay.dataset.refId = textarea.dataset.overlayId;
+    element.parentNode.appendChild(overlay);
+
+    // Store a unique ID to tie this overlay to the element
+    element.dataset.overlayId = Math.random().toString(36).slice(2);
+    overlay.dataset.refId = element.dataset.overlayId;
 }
 
-/** Updates overlay position on textarea resize/scroll */
-function updateGhostOverlayPosition(textarea) {
-    const overlayId = textarea.dataset.overlayId;
-    if (!overlayId) return;
+/** Updates overlay position on element resize/scroll */
+function updateGhostOverlayPosition(element, overlay = null) {
+    if (!overlay) {
+        const overlayId = element.dataset.overlayId;
+        if (!overlayId) return;
+        overlay = document.querySelector(`.${GHOST_CLASS}[data-ref-id="${overlayId}"]`);
+    }
 
-    const overlay = document.querySelector(`.${GHOST_CLASS}[data-ref-id="${overlayId}"]`);
-    if (!overlay) return;
+    const rect = element.getBoundingClientRect();
+    const parentRect = element.offsetParent ? element.offsetParent.getBoundingClientRect() : {top: 0, left: 0};
 
-    const rect = textarea.getBoundingClientRect();
-    overlay.style.top = rect.top + window.scrollY + "px";
-    overlay.style.left = rect.left + window.scrollX + "px";
-    overlay.style.width = rect.width + "px";
-    overlay.style.height = rect.height + "px";
+    overlay.style.top = `${rect.top - parentRect.top + element.scrollTop}px`;
+    overlay.style.left = `${rect.left - parentRect.left + element.scrollLeft}px`;
+    overlay.style.width = `${rect.width}px`;
+    overlay.style.height = `${rect.height}px`;
 }
 
 /**
- * Removes any existing overlay associated with the given textarea.
+ * Removes any existing overlay associated with the given element.
  */
-function removeGhostOverlay(textarea) {
-    const overlayId = textarea.dataset.overlayId || "";
+function removeGhostOverlay(element) {
+    const overlayId = element.dataset.overlayId || "";
     if (!overlayId) return;
 
     const allOverlays = document.querySelectorAll(`.${GHOST_CLASS}`);
