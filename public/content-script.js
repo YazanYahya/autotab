@@ -156,7 +156,7 @@ function acceptSuggestion(element) {
 
     console.log("[AutoTab] Tab pressed, accepting suggestion:", suggestion);
     inputData.get(element).originalText = userText;
-    element.value = userText + suggestion;
+    element.value = userText + " " + suggestion;
     removeGhostOverlay(element);
 }
 
@@ -225,7 +225,7 @@ function showGhostOverlay(element, suggestion) {
     overlay.style.border = style.border;
     overlay.style.borderRadius = style.borderRadius;
     overlay.style.color = style.color;
-    overlay.textContent = userText + suggestion;
+    overlay.textContent = userText + " " + suggestion;
 
     updateGhostOverlayPosition(element, overlay);
 
