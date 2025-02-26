@@ -1,273 +1,370 @@
-/** A CSS class for the floating ghost suggestion */
+/** Constants */
 const GHOST_CLASS = "autotab-ghost-overlay";
-
-/** Stores input and text area states */
-const inputData = new Map();
-
-/** Debounce timers to prevent excessive API calls */
-const debounceTimers = new Map();
-
-/** Configuration */
 const DEBOUNCE_DELAY = 1500;
 const MIN_TEXT_LENGTH = 10;
 
-/** Initialize AutoTab on page load */
-function initializeAutoTab() {
-    console.log("[AutoTab] Initializing extension...");
+/**
+ * Enhanced Ghost Overlay Manager with performance optimizations
+ */
+class GhostOverlayManager {
+    constructor() {
+        this.overlays = new WeakMap();
+        this.updateQueue = new Set();
+        this.rafId = null;
+    }
 
-    // Attach AutoTab to all existing input and textarea elements
-    attachAutoTabToExistingElements();
+    createOrUpdate(element, suggestion) {
+        let overlay = this.overlays.get(element);
 
-    // Observe dynamic input and textarea elements added to the DOM
-    observeDynamicElements();
+        if (!overlay) {
+            overlay = document.createElement('div');
+            overlay.className = GHOST_CLASS;
+            document.body.appendChild(overlay);
+            this.overlays.set(element, overlay);
+            this.setupOverlayStyles(overlay, element);
+        }
+
+        this.queueUpdate(element);
+        this.updateContent(element, suggestion);
+    }
+
+    setupOverlayStyles(overlay, element) {
+        const styles = window.getComputedStyle(element);
+        Object.assign(overlay.style, {
+            font: styles.font,
+            lineHeight: styles.lineHeight,
+            paddingTop: styles.paddingTop,
+            paddingRight: styles.paddingRight,
+            paddingBottom: styles.paddingBottom,
+            paddingLeft: '0',
+            border: 'none',
+            position: 'absolute',
+            pointerEvents: 'none',
+            whiteSpace: 'pre-wrap',
+            overflow: 'hidden',
+            color: 'rgb(169, 169, 169)',
+            backgroundColor: 'red',
+            zIndex: '1000',
+            boxSizing: 'border-box',
+            wordBreak: 'break-word',
+            direction: styles.direction,
+            textAlign: 'left',
+        });
+    }
+
+    queueUpdate(element) {
+        this.updateQueue.add(element);
+        if (!this.rafId) {
+            this.rafId = requestAnimationFrame(() => this.processUpdates());
+        }
+    }
+
+    processUpdates() {
+        this.updateQueue.forEach(element => {
+            this.updatePosition(element);
+        });
+        this.updateQueue.clear();
+        this.rafId = null;
+    }
+
+    updatePosition(element) {
+
+        console.log("[GhostOverlayManager] Updating position for:", element);
+        const overlay = this.overlays.get(element);
+        if (!overlay) return;
+
+        // Get the position of the cursor
+        const rect = element.getBoundingClientRect();
+        const scrollLeft = window.pageXOffset || document.documentElement.scrollLeft;
+        const scrollTop = window.pageYOffset || document.documentElement.scrollTop;
+        const paddingLeft = parseFloat(window.getComputedStyle(element).paddingLeft);
+
+        // Create a temporary span to measure text width
+        const measureSpan = document.createElement('span');
+        measureSpan.style.font = window.getComputedStyle(element).font;
+        measureSpan.style.visibility = 'hidden';
+        measureSpan.style.position = 'absolute';
+        // measureSpan.textContent = element.value.substring(0, element.selectionEnd);
+        measureSpan.textContent = element.value;
+        document.body.appendChild(measureSpan);
+
+        // Calculate cursor position
+        const textWidth = measureSpan.getBoundingClientRect().width;
+        document.body.removeChild(measureSpan);
+
+        // Position overlay after cursor
+        Object.assign(overlay.style, {
+            top: `${rect.top + scrollTop}px`,
+            left: `${rect.left + scrollLeft + textWidth + paddingLeft}px`,
+            height: `${rect.height}px`,
+            width: 'auto'
+        });
+    }
+
+    updateContent(element, suggestion) {
+        const overlay = this.overlays.get(element);
+        if (!overlay) return;
+
+        // Handle RTL text if needed
+        overlay.style.direction = window.getComputedStyle(element).direction;
+
+        overlay.textContent = suggestion;
+        this.syncScroll(element, overlay);
+    }
+
+    syncScroll(element, overlay) {
+        overlay.scrollTop = element.scrollTop;
+        overlay.scrollLeft = element.scrollLeft;
+    }
+
+    remove(element) {
+        const overlay = this.overlays.get(element);
+        if (overlay) {
+            overlay.remove();
+            this.overlays.delete(element);
+        }
+        this.updateQueue.delete(element);
+    }
 }
 
-/** Finds all existing input and textarea elements on the page and attaches AutoTab */
-function attachAutoTabToExistingElements() {
-    console.log("[AutoTab] Attaching to existing inputs and textareas...");
-    document.querySelectorAll("textarea, input[type='text']").forEach(attachAutoTab);
+/**
+ * State management using a WeakMap for automatic garbage collection
+ */
+class InputStateManager {
+    constructor() {
+        this.states = new WeakMap();
+        this.debounceTimers = new WeakMap();
+    }
+
+    getState(element) {
+        if (!this.states.has(element)) {
+            this.states.set(element, {
+                userText: element.value || "",
+                suggestion: "",
+                originalText: "",
+                cachedResponse: null
+            });
+        }
+        return this.states.get(element);
+    }
+
+    setDebounceTimer(element, timer) {
+        this.debounceTimers.set(element, timer);
+    }
+
+    clearDebounceTimer(element) {
+        clearTimeout(this.debounceTimers.get(element));
+    }
 }
 
-/** Observes dynamically added input and textarea elements and attaches AutoTab */
-function observeDynamicElements() {
-    const observer = new MutationObserver((mutations) => {
-        mutations.forEach((mutation) => {
-            mutation.addedNodes.forEach((node) => {
-                if (node.nodeType === 1 && (node.tagName === "TEXTAREA" || (node.tagName === "INPUT" && node.type === "text"))) {
-                    console.log("[AutoTab] New input/textarea detected:", node);
-                    attachAutoTab(node);
-                }
+// Create singleton instances
+const ghostOverlayManager = new GhostOverlayManager();
+const inputStateManager = new InputStateManager();
+
+/**
+ * Main AutoTab functionality
+ */
+class AutoTab {
+    static init() {
+        console.log("[AutoTab] Initializing extension...");
+        this.attachToExistingElements();
+        this.observeDynamicElements();
+    }
+
+    static attachToExistingElements() {
+        document.querySelectorAll("textarea, input[type='text']")
+            .forEach(element => this.attach(element));
+    }
+
+    static observeDynamicElements() {
+        const observer = new MutationObserver((mutations) => {
+            mutations.forEach((mutation) => {
+                mutation.addedNodes.forEach((node) => {
+                    if (this.isValidInputElement(node)) {
+                        this.attach(node);
+                    }
+                });
             });
         });
-    });
 
-    observer.observe(document.body, {childList: true, subtree: true});
-    console.log("[AutoTab] Now observing dynamic inputs and textareas...");
-}
-
-/** Attaches AutoTab functionality to a given input or textarea */
-function attachAutoTab(element) {
-    if (inputData.has(element)) return; // Prevent duplicate listeners
-
-    console.log("[AutoTab] Attaching AutoTab to:", element);
-
-    // Initialize storage
-    inputData.set(element, {
-        userText: element.value || "",
-        suggestion: "",
-        originalText: "",
-        cachedResponse: null,
-    });
-
-    // Attach event listeners
-    attachElementListeners(element);
-}
-
-/** Attaches all event listeners to an input or textarea */
-function attachElementListeners(element) {
-    element.addEventListener("input", () => handleUserInput(element));
-    element.addEventListener("keydown", (e) => handleKeydown(e, element));
-    element.addEventListener("scroll", () => updateGhostOverlayPosition(element));
-    new ResizeObserver(() => updateGhostOverlayPosition(element)).observe(element);
-}
-
-/** Handles user input, debouncing AI requests */
-function handleUserInput(element) {
-    const userText = element.value.trim();
-    console.log("[AutoTab] User typed:", userText);
-
-    inputData.get(element).userText = userText;
-
-    if (!isValidInput(userText)) {
-        console.log("[AutoTab] Invalid input, skipping AI request.");
-        removeGhostOverlay(element);
-        inputData.get(element).suggestion = "";
-        return;
+        observer.observe(document.body, {childList: true, subtree: true});
     }
 
-    // Debounce AI request
-    clearTimeout(debounceTimers.get(element));
-    debounceTimers.set(element, setTimeout(() => {
-        requestAISuggestion(element, userText);
-    }, DEBOUNCE_DELAY));
-}
-
-/** Handles key events: Tab (accept suggestion), Ctrl+Z (undo) */
-function handleKeydown(event, element) {
-    if (event.key === "Tab") {
-        event.preventDefault();
-        acceptSuggestion(element);
+    static isValidInputElement(node) {
+        return node.nodeType === 1 &&
+            (node.tagName === "TEXTAREA" ||
+                (node.tagName === "INPUT" && node.type === "text"));
     }
 
-    if (event.ctrlKey && (event.key === "z" || event.key === "Z")) {
-        event.preventDefault();
-        undoSuggestion(element);
-    }
-}
+    static attach(element) {
+        if (inputStateManager.states.has(element)) return;
 
-/** Requests AI suggestion for an input */
-function requestAISuggestion(element, userText) {
-    if (!userText) {
-        removeGhostOverlay(element);
-        inputData.get(element).suggestion = "";
-        return;
+        console.log("[AutoTab] Attaching to:", element);
+        inputStateManager.getState(element);
+        this.attachEventListeners(element);
     }
 
-    console.log("[AutoTab] Checking cache for:", userText);
+    static attachEventListeners(element) {
+        element.addEventListener("input", (event) => this.handleInput(event, element));
+        element.addEventListener("keydown", (event) => this.handleKeydown(event, element));
+        element.addEventListener("scroll", () => this.handleScroll(element));
+        // element.addEventListener("blur", () => this.handleBlur(element));
+        // element.addEventListener("focus", () => this.handleFocus(element));
 
-    if (inputData.get(element).cachedResponse === userText) {
-        console.log("[AutoTab] Using cached AI suggestion.");
-        showGhostOverlay(element, inputData.get(element).suggestion);
-        return;
+        new ResizeObserver(() => ghostOverlayManager.queueUpdate(element))
+            .observe(element);
     }
 
-    console.log("[AutoTab] Requesting AI suggestion for:", userText);
+    static handleInput(event, element) {
+        const userText = element.value.trim();
+        const state = inputStateManager.getState(element);
+        const lastChar = event.data;
 
-    try {
-        chrome.runtime.sendMessage(
-            {action: "generate_suggestion", text: userText},
-            (response) => {
-                if (chrome.runtime.lastError) {
-                    console.error("[AutoTab] Chrome runtime error:", chrome.runtime.lastError.message);
-                    return;
-                }
-
-                if (response && response.suggestion) {
-                    console.log("[AutoTab] AI suggestion received:", response.suggestion);
-                    inputData.get(element).suggestion = response.suggestion;
-                    inputData.get(element).cachedResponse = userText;
-                    showGhostOverlay(element, response.suggestion);
-                } else {
-                    console.warn("[AutoTab] No suggestion received.");
-                    inputData.get(element).suggestion = "";
-                    removeGhostOverlay(element);
-                }
-            }
-        );
-    } catch (error) {
-        console.error("[AutoTab] Failed to send message:", error);
-    }
-}
-
-/** Accepts the AI suggestion when the user presses "Tab" */
-function acceptSuggestion(element) {
-    const {suggestion, userText} = inputData.get(element);
-    if (!suggestion) return;
-
-    console.log("[AutoTab] Tab pressed, accepting suggestion:", suggestion);
-    inputData.get(element).originalText = userText;
-    element.value = userText + " " + suggestion;
-    removeGhostOverlay(element);
-}
-
-/** Reverts text to original when the user presses "Ctrl+Z" */
-function undoSuggestion(element) {
-    const {originalText} = inputData.get(element);
-    if (!originalText) return;
-
-    console.log("[AutoTab] Ctrl+Z pressed, reverting to:", originalText);
-    element.value = originalText;
-    inputData.get(element).originalText = "";
-    removeGhostOverlay(element);
-}
-
-/**
- * Validates user input before sending an AI request.
- * Ensures input meets a minimum length and is not just numbers or symbols.
- */
-function isValidInput(text) {
-    if (text.length < MIN_TEXT_LENGTH) {
-        console.log("[AutoTab] Input too short, skipping AI request.");
-        return false;
-    }
-
-    if (/^\d+$/.test(text)) {
-        console.log("[AutoTab] Input is numeric-only, skipping AI request.");
-        return false;
-    }
-
-    if (/^[^a-zA-Z0-9]+$/.test(text)) {
-        console.log("[AutoTab] Input contains only special characters, skipping AI request.");
-        return false;
-    }
-
-    return true;
-}
-
-/**
- * Positions a floating overlay on top of the element to display ghost text.
- */
-function showGhostOverlay(element, suggestion) {
-    removeGhostOverlay(element);
-
-    const data = inputData.get(element);
-    const userText = data.userText || "";
-
-    const overlay = document.createElement("div");
-    overlay.className = GHOST_CLASS;
-
-    // Apply text styles from the input field
-    const style = window.getComputedStyle(element);
-    overlay.style.position = "absolute";
-    overlay.style.zIndex = "9999";
-    overlay.style.opacity = "0.3";
-    overlay.style.whiteSpace = "pre-wrap";
-    overlay.style.pointerEvents = "none";
-    overlay.style.overflow = "hidden";
-    overlay.style.backgroundColor = "transparent";
-
-    overlay.style.fontFamily = style.fontFamily;
-    overlay.style.fontSize = style.fontSize;
-    overlay.style.lineHeight = style.lineHeight;
-    overlay.style.boxSizing = style.boxSizing;
-    overlay.style.padding = style.padding;
-    overlay.style.margin = style.margin;
-    overlay.style.border = style.border;
-    overlay.style.borderRadius = style.borderRadius;
-    overlay.style.color = style.color;
-    overlay.textContent = userText + " " + suggestion;
-
-    updateGhostOverlayPosition(element, overlay);
-
-    element.parentNode.appendChild(overlay);
-
-    // Store a unique ID to tie this overlay to the element
-    element.dataset.overlayId = Math.random().toString(36).slice(2);
-    overlay.dataset.refId = element.dataset.overlayId;
-}
-
-/** Updates overlay position on element resize/scroll */
-function updateGhostOverlayPosition(element, overlay = null) {
-    if (!overlay) {
-        const overlayId = element.dataset.overlayId;
-        if (!overlayId) return;
-        overlay = document.querySelector(`.${GHOST_CLASS}[data-ref-id="${overlayId}"]`);
-    }
-
-    const rect = element.getBoundingClientRect();
-    const parentRect = element.offsetParent ? element.offsetParent.getBoundingClientRect() : {top: 0, left: 0};
-
-    overlay.style.top = `${rect.top - parentRect.top + element.scrollTop}px`;
-    overlay.style.left = `${rect.left - parentRect.left + element.scrollLeft}px`;
-    overlay.style.width = `${rect.width}px`;
-    overlay.style.height = `${rect.height}px`;
-}
-
-/**
- * Removes any existing overlay associated with the given element.
- */
-function removeGhostOverlay(element) {
-    const overlayId = element.dataset.overlayId || "";
-    if (!overlayId) return;
-
-    const allOverlays = document.querySelectorAll(`.${GHOST_CLASS}`);
-    allOverlays.forEach((el) => {
-        if (el.dataset.refId === overlayId) {
-            el.remove();
-            console.log("[AutoTab] Removed ghost overlay.");
+        if (event.inputType === "insertText" && lastChar === "\t") {
+            console.log("[AutoTab] Tab character detected, ignoring input.");
+            return;
         }
-    });
+
+        state.userText = userText;
+
+        if (!this.isValidInput(userText)) {
+            ghostOverlayManager.remove(element);
+            state.suggestion = "";
+            return;
+        }
+
+        inputStateManager.clearDebounceTimer(element);
+
+        if (state.suggestion && userText.endsWith(state.suggestion)) {
+            console.log("[AutoTab] User text ends with suggestion, adjusting remaining suggestion.");
+            const remainingSuggestion = state.suggestion.substring(userText.length - state.originalText.length);
+            state.suggestion = remainingSuggestion;
+            ghostOverlayManager.createOrUpdate(element, remainingSuggestion);
+        } else if (state.suggestion && (lastChar === " " || lastChar === "\n")) {
+            console.log("[AutoTab] Space or newline detected, queuing overlay update.");
+            ghostOverlayManager.queueUpdate(element);
+        } else {
+            console.log("[AutoTab] Setting debounce timer for suggestion request.");
+            inputStateManager.setDebounceTimer(element, setTimeout(() => {
+                this.requestSuggestion(element, userText);
+            }, DEBOUNCE_DELAY));
+        }
+    }
+
+    static handleKeydown(event, element) {
+        const state = inputStateManager.getState(element);
+
+        if (event.key === "Tab" && state.suggestion) {
+            event.preventDefault();
+            this.acceptSuggestion(element);
+        } else if (event.ctrlKey && (event.key === "z" || event.key === "Z")) {
+            event.preventDefault();
+            this.undoSuggestion(element);
+        }
+    }
+
+    static handleScroll(element) {
+        ghostOverlayManager.queueUpdate(element);
+    }
+
+    static handleBlur(element) {
+        ghostOverlayManager.remove(element);
+    }
+
+    static handleFocus(element) {
+        const state = inputStateManager.getState(element);
+        if (state.suggestion) {
+            ghostOverlayManager.createOrUpdate(element, state.suggestion);
+        }
+    }
+
+    static isValidInput(text) {
+        return text.length >= MIN_TEXT_LENGTH;
+    }
+
+    static async requestSuggestion(element, userText) {
+        const state = inputStateManager.getState(element);
+
+        if (!userText) {
+            ghostOverlayManager.remove(element);
+            state.suggestion = "";
+            return;
+        }
+
+        if (state.cachedResponse === userText) {
+            console.log("[AutoTab] Using cached suggestion");
+            return;
+        }
+
+        try {
+            const suggestion = await this.getAISuggestion(userText);
+
+            if (suggestion) {
+                state.suggestion = suggestion;
+                state.cachedResponse = userText;
+                ghostOverlayManager.createOrUpdate(element, suggestion);
+            } else {
+                ghostOverlayManager.remove(element);
+                state.suggestion = "";
+            }
+        } catch (error) {
+            console.error("[AutoTab] Suggestion error:", error);
+            ghostOverlayManager.remove(element);
+            state.suggestion = "";
+        }
+    }
+
+    static acceptSuggestion(element) {
+        const state = inputStateManager.getState(element);
+        if (!state.suggestion) return;
+
+        state.originalText = element.value;
+        element.value = state.originalText + state.suggestion;
+        state.suggestion = "";
+        ghostOverlayManager.remove(element);
+        element.dispatchEvent(new Event('input', {bubbles: true}));
+    }
+
+    static undoSuggestion(element) {
+        const state = inputStateManager.getState(element);
+        if (!state.originalText) return;
+
+        element.value = state.originalText;
+        state.originalText = "";
+        state.suggestion = "";
+        ghostOverlayManager.remove(element);
+        element.dispatchEvent(new Event('input', {bubbles: true}));
+    }
+
+    static async getAISuggestion(text) {
+        try {
+            const response = await chrome.runtime.sendMessage({action: "generate_suggestion", text});
+            console.log("[AutoTab] AI suggestion response:", response);
+            if (response && response.suggestion) {
+                return response.suggestion;
+            } else {
+                throw new Error("Invalid response format");
+            }
+        } catch (error) {
+            console.error("[AutoTab] Error fetching AI suggestion:", error);
+            return "";
+        }
+    }
 }
 
-// Start the extension
-initializeAutoTab();
+// Add required CSS
+const style = document.createElement('style');
+style.textContent = `
+    .${GHOST_CLASS} {
+        position: absolute;
+        pointer-events: none;
+        background: transparent;
+        z-index: 1000;
+        opacity: 0.6;
+        user-select: none;
+    }
+`;
+document.head.appendChild(style);
+
+// Initialize
+AutoTab.init();
