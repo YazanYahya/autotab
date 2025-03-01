@@ -31,51 +31,71 @@ class GhostOverlayManager {
         Object.assign(overlay.style, {
             font: styles.font,
             lineHeight: styles.lineHeight,
-            paddingTop: styles.paddingTop,
-            paddingRight: styles.paddingRight,
-            paddingBottom: styles.paddingBottom,
-            paddingLeft: styles.paddingLeft,
-            border: 'none',
+            padding: styles.padding,
+            border: styles.border,
             position: 'absolute',
             pointerEvents: 'none',
             whiteSpace: 'pre-wrap',
             overflow: 'hidden',
-            color: 'rgb(169, 169, 169)',
-            backgroundColor: 'red',
             zIndex: '1000',
             boxSizing: 'border-box',
             wordBreak: 'break-word',
             direction: styles.direction,
-            textAlign: styles.textAlign
+            textAlign: styles.textAlign,
+            borderRadius: styles.borderRadius,
+            textTransform: styles.textTransform,
+            letterSpacing: styles.letterSpacing,
+            wordSpacing: styles.wordSpacing,
+            backgroundColor: 'transparent'
         });
+
+        // Create spans for content if they don't exist
+        if (!overlay.querySelector('.content-text')) {
+            const contentSpan = document.createElement('span');
+            contentSpan.className = 'content-text';
+            contentSpan.style.color = 'transparent'; // Make text invisible but preserve space
+            overlay.appendChild(contentSpan);
+        }
+        
+        if (!overlay.querySelector('.ghost-text')) {
+            const ghostSpan = document.createElement('span');
+            ghostSpan.className = 'ghost-text';
+            ghostSpan.style.color = 'rgb(169, 169, 169)';
+            overlay.appendChild(ghostSpan);
+        }
     }
 
     updatePosition(element) {
-
-        console.log("[GhostOverlayManager] Updating position for:", element);
         const overlay = this.overlays.get(element);
         if (!overlay) return;
 
-        // Get the position of the cursor
         const rect = element.getBoundingClientRect();
         const scrollLeft = window.pageXOffset || document.documentElement.scrollLeft;
         const scrollTop = window.pageYOffset || document.documentElement.scrollTop;
 
-        // Position overlay after cursor
+        // Position overlay exactly over the input element
         Object.assign(overlay.style, {
             top: `${rect.top + scrollTop}px`,
             left: `${rect.left + scrollLeft}px`,
-            height: `${rect.height}px`,
-            width: 'auto'
+            width: `${rect.width}px`,
+            height: `${rect.height}px`
         });
+
+        this.syncScroll(element, overlay);
     }
 
     updateContent(element, suggestion) {
         const overlay = this.overlays.get(element);
         if (!overlay) return;
 
-        overlay.textContent = suggestion;
-        this.syncScroll(element, overlay);
+        const cursorPosition = element.selectionEnd;
+        const beforeCursor = element.value.substring(0, cursorPosition);
+
+        const contentSpan = overlay.querySelector('.content-text');
+        const ghostSpan = overlay.querySelector('.ghost-text');
+        
+        contentSpan.textContent = beforeCursor;
+        ghostSpan.textContent = suggestion;
     }
 
     syncScroll(element, overlay) {
@@ -325,8 +345,22 @@ style.textContent = `
         pointer-events: none;
         background: transparent;
         z-index: 1000;
-        opacity: 0.6;
         user-select: none;
+        display: inline-block;
+    }
+    .${GHOST_CLASS} .content-text {
+        position: relative;
+        display: inline;
+        color: transparent; /* Make the text invisible but preserve its space */
+        white-space: pre-wrap;
+        word-wrap: break-word;
+    }
+    .${GHOST_CLASS} .ghost-text {
+        position: relative;
+        display: inline;
+        white-space: pre-wrap;
+        word-wrap: break-word;
+        opacity: 0.6;
     }
 `;
 document.head.appendChild(style);
