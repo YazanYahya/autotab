@@ -1,16 +1,32 @@
-/** Constants */
+/**
+ * AutoTab - Chrome Extension for AI-powered text suggestions
+ * 
+ * This content script provides real-time text suggestions in input fields and textareas.
+ * Features:
+ * - Real-time AI suggestions as you type
+ * - Tab to accept suggestions
+ * - Ctrl+Z to undo accepted suggestions
+ * - Automatic positioning and scrolling
+ * - Performance optimized with WeakMap and debouncing
+ */
+
+/** Configuration Constants */
 const GHOST_CLASS = "autotab-ghost-overlay";
-const DEBOUNCE_DELAY = 1500;
-const MIN_TEXT_LENGTH = 10;
+const DEBOUNCE_DELAY = 1500;  // Delay before requesting AI suggestions (ms)
+const MIN_TEXT_LENGTH = 10;    // Minimum text length to trigger suggestions
 
 /**
- * Enhanced Ghost Overlay Manager with performance optimizations
+ * Manages overlay elements that display text suggestions
+ * Uses WeakMap for automatic garbage collection of unused overlays
  */
 class GhostOverlayManager {
     constructor() {
         this.overlays = new WeakMap();
     }
 
+    /**
+     * Creates or updates an overlay for displaying text suggestions
+     */
     createOrUpdate(element, suggestion) {
         let overlay = this.overlays.get(element);
 
@@ -98,11 +114,17 @@ class GhostOverlayManager {
         ghostSpan.textContent = suggestion;
     }
 
+    /**
+     * Synchronizes the overlay's scroll position with its input element
+     */
     syncScroll(element, overlay) {
         overlay.scrollTop = element.scrollTop;
         overlay.scrollLeft = element.scrollLeft;
     }
 
+    /**
+     * Removes the overlay associated with an input element
+     */
     remove(element) {
         const overlay = this.overlays.get(element);
         if (overlay) {
@@ -113,7 +135,8 @@ class GhostOverlayManager {
 }
 
 /**
- * State management using a WeakMap for automatic garbage collection
+ * Manages input element states and debounce timers
+ * Uses WeakMap for automatic cleanup of state data
  */
 class InputStateManager {
     constructor() {
@@ -121,6 +144,9 @@ class InputStateManager {
         this.debounceTimers = new WeakMap();
     }
 
+    /**
+     * Gets or creates a state object for an input element
+     */
     getState(element) {
         if (!this.states.has(element)) {
             this.states.set(element, {
@@ -142,12 +168,13 @@ class InputStateManager {
     }
 }
 
-// Create singleton instances
+// Initialize singleton managers
 const ghostOverlayManager = new GhostOverlayManager();
 const inputStateManager = new InputStateManager();
 
 /**
  * Main AutoTab functionality
+ * Handles input detection, event management, and AI suggestions
  */
 class AutoTab {
     static init() {
@@ -200,10 +227,14 @@ class AutoTab {
             .observe(element);
     }
 
+    /**
+     * Handles user input events and manages suggestion display
+     */
     static handleInput(event, element) {
         const userText = element.value.trim();
         const state = inputStateManager.getState(element);
         const newInput = event.data;
+        console.log("[AutoTab] User input:", newInput);
         if (newInput === null || newInput === undefined) return;
 
         state.userText = userText;
@@ -261,6 +292,9 @@ class AutoTab {
         }, DEBOUNCE_DELAY));
     }
 
+    /**
+     * Handles keyboard shortcuts (Tab to accept, Ctrl+Z to undo)
+     */
     static handleKeydown(event, element) {
         const state = inputStateManager.getState(element);
 
@@ -292,6 +326,9 @@ class AutoTab {
         return text.length >= MIN_TEXT_LENGTH;
     }
 
+    /**
+     * Requests an AI suggestion for the current input text
+     */
     static async requestSuggestion(element, userText) {
         const state = inputStateManager.getState(element);
 
@@ -303,6 +340,7 @@ class AutoTab {
 
         if (state.cachedResponse === userText) {
             console.log("[AutoTab] Using cached suggestion");
+            ghostOverlayManager.createOrUpdate(element, state.suggestion);
             return;
         }
 
@@ -346,6 +384,9 @@ class AutoTab {
         element.dispatchEvent(new Event('input', {bubbles: true}));
     }
 
+    /**
+     * Gets contextual information about an input element
+     */
     static getElementContext(element) {
         try {
             // Get labels associated with the element
@@ -400,7 +441,7 @@ class AutoTab {
     }
 }
 
-// Add required CSS
+/** Add required CSS styles */
 const style = document.createElement('style');
 style.textContent = `
     .${GHOST_CLASS} {
@@ -414,7 +455,7 @@ style.textContent = `
     .${GHOST_CLASS} .content-text {
         position: relative;
         display: inline;
-        color: transparent; /* Make the text invisible but preserve its space */
+        color: transparent;
         white-space: pre-wrap;
         word-wrap: break-word;
     }
@@ -428,5 +469,5 @@ style.textContent = `
 `;
 document.head.appendChild(style);
 
-// Initialize
+// Initialize AutoTab
 AutoTab.init();
