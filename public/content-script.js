@@ -9,8 +9,6 @@ const MIN_TEXT_LENGTH = 10;
 class GhostOverlayManager {
     constructor() {
         this.overlays = new WeakMap();
-        this.updateQueue = new Set();
-        this.rafId = null;
     }
 
     createOrUpdate(element, suggestion) {
@@ -24,7 +22,7 @@ class GhostOverlayManager {
             this.setupOverlayStyles(overlay, element);
         }
 
-        this.queueUpdate(element);
+        this.updatePosition(element);
         this.updateContent(element, suggestion);
     }
 
@@ -36,7 +34,7 @@ class GhostOverlayManager {
             paddingTop: styles.paddingTop,
             paddingRight: styles.paddingRight,
             paddingBottom: styles.paddingBottom,
-            paddingLeft: '0',
+            paddingLeft: styles.paddingLeft,
             border: 'none',
             position: 'absolute',
             pointerEvents: 'none',
@@ -48,23 +46,8 @@ class GhostOverlayManager {
             boxSizing: 'border-box',
             wordBreak: 'break-word',
             direction: styles.direction,
-            textAlign: 'left',
+            textAlign: styles.textAlign
         });
-    }
-
-    queueUpdate(element) {
-        this.updateQueue.add(element);
-        if (!this.rafId) {
-            this.rafId = requestAnimationFrame(() => this.processUpdates());
-        }
-    }
-
-    processUpdates() {
-        this.updateQueue.forEach(element => {
-            this.updatePosition(element);
-        });
-        this.updateQueue.clear();
-        this.rafId = null;
     }
 
     updatePosition(element) {
@@ -77,25 +60,11 @@ class GhostOverlayManager {
         const rect = element.getBoundingClientRect();
         const scrollLeft = window.pageXOffset || document.documentElement.scrollLeft;
         const scrollTop = window.pageYOffset || document.documentElement.scrollTop;
-        const paddingLeft = parseFloat(window.getComputedStyle(element).paddingLeft);
-
-        // Create a temporary span to measure text width
-        const measureSpan = document.createElement('span');
-        measureSpan.style.font = window.getComputedStyle(element).font;
-        measureSpan.style.visibility = 'hidden';
-        measureSpan.style.position = 'absolute';
-        // measureSpan.textContent = element.value.substring(0, element.selectionEnd);
-        measureSpan.textContent = element.value;
-        document.body.appendChild(measureSpan);
-
-        // Calculate cursor position
-        const textWidth = measureSpan.getBoundingClientRect().width;
-        document.body.removeChild(measureSpan);
 
         // Position overlay after cursor
         Object.assign(overlay.style, {
             top: `${rect.top + scrollTop}px`,
-            left: `${rect.left + scrollLeft + textWidth + paddingLeft}px`,
+            left: `${rect.left + scrollLeft}px`,
             height: `${rect.height}px`,
             width: 'auto'
         });
@@ -104,9 +73,6 @@ class GhostOverlayManager {
     updateContent(element, suggestion) {
         const overlay = this.overlays.get(element);
         if (!overlay) return;
-
-        // Handle RTL text if needed
-        overlay.style.direction = window.getComputedStyle(element).direction;
 
         overlay.textContent = suggestion;
         this.syncScroll(element, overlay);
@@ -123,7 +89,6 @@ class GhostOverlayManager {
             overlay.remove();
             this.overlays.delete(element);
         }
-        this.updateQueue.delete(element);
     }
 }
 
@@ -211,7 +176,7 @@ class AutoTab {
         // element.addEventListener("blur", () => this.handleBlur(element));
         // element.addEventListener("focus", () => this.handleFocus(element));
 
-        new ResizeObserver(() => ghostOverlayManager.queueUpdate(element))
+        new ResizeObserver(() => ghostOverlayManager.updatePosition(element))
             .observe(element);
     }
 
@@ -242,7 +207,7 @@ class AutoTab {
             ghostOverlayManager.createOrUpdate(element, remainingSuggestion);
         } else if (state.suggestion && (lastChar === " " || lastChar === "\n")) {
             console.log("[AutoTab] Space or newline detected, queuing overlay update.");
-            ghostOverlayManager.queueUpdate(element);
+            ghostOverlayManager.updatePosition(element);
         } else {
             console.log("[AutoTab] Setting debounce timer for suggestion request.");
             inputStateManager.setDebounceTimer(element, setTimeout(() => {
@@ -264,7 +229,7 @@ class AutoTab {
     }
 
     static handleScroll(element) {
-        ghostOverlayManager.queueUpdate(element);
+        ghostOverlayManager.updatePosition(element);
     }
 
     static handleBlur(element) {
