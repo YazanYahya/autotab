@@ -193,8 +193,8 @@ class AutoTab {
         element.addEventListener("input", (event) => this.handleInput(event, element));
         element.addEventListener("keydown", (event) => this.handleKeydown(event, element));
         element.addEventListener("scroll", () => this.handleScroll(element));
-        // element.addEventListener("blur", () => this.handleBlur(element));
-        // element.addEventListener("focus", () => this.handleFocus(element));
+        element.addEventListener("blur", () => this.handleBlur(element));
+        element.addEventListener("focus", () => this.handleFocus(element));
 
         new ResizeObserver(() => ghostOverlayManager.updatePosition(element))
             .observe(element);
@@ -203,12 +203,8 @@ class AutoTab {
     static handleInput(event, element) {
         const userText = element.value.trim();
         const state = inputStateManager.getState(element);
-        const lastChar = event.data;
-
-        if (event.inputType === "insertText" && lastChar === "\t") {
-            console.log("[AutoTab] Tab character detected, ignoring input.");
-            return;
-        }
+        const newInput = event.data;
+        if (newInput === null || newInput === undefined) return;
 
         state.userText = userText;
 
@@ -220,20 +216,49 @@ class AutoTab {
 
         inputStateManager.clearDebounceTimer(element);
 
-        if (state.suggestion && userText.endsWith(state.suggestion)) {
-            console.log("[AutoTab] User text ends with suggestion, adjusting remaining suggestion.");
-            const remainingSuggestion = state.suggestion.substring(userText.length - state.originalText.length);
-            state.suggestion = remainingSuggestion;
-            ghostOverlayManager.createOrUpdate(element, remainingSuggestion);
-        } else if (state.suggestion && (lastChar === " " || lastChar === "\n")) {
-            console.log("[AutoTab] Space or newline detected, queuing overlay update.");
-            ghostOverlayManager.updatePosition(element);
-        } else {
-            console.log("[AutoTab] Setting debounce timer for suggestion request.");
-            inputStateManager.setDebounceTimer(element, setTimeout(() => {
-                this.requestSuggestion(element, userText);
-            }, DEBOUNCE_DELAY));
+        // Case 1: Check if typed/pasted text matches beginning of suggestion
+        if (state.suggestion && newInput) {
+            console.log("[AutoTab] Checking if input matches suggestion:", {
+                newInput,
+                suggestion: state.suggestion
+            });
+
+            if (state.suggestion.startsWith(newInput)) {
+                const remainingSuggestion = state.suggestion.substring(newInput.length);
+                console.log("[AutoTab] Input matches! Updating suggestion:", {
+                    from: state.suggestion,
+                    to: remainingSuggestion,
+                    matched: newInput
+                });
+                state.suggestion = remainingSuggestion;
+                ghostOverlayManager.createOrUpdate(element, remainingSuggestion);
+                return;
+            }
         }
+
+        // Case 2: Handle spaces after suggestion
+        if (state.suggestion && newInput === " ") {
+            console.log("[AutoTab] Space detected, adjusting overlay position");
+            const contentSpan = ghostOverlayManager.overlays.get(element)?.querySelector('.content-text');
+            if (contentSpan) {
+                contentSpan.textContent = element.value;
+            }
+            ghostOverlayManager.updatePosition(element);
+            return;
+        }
+
+        // Hide suggestion if input doesn't match
+        if (state.suggestion && newInput) {
+            console.log("[AutoTab] Input doesn't match suggestion, hiding overlay");
+            ghostOverlayManager.remove(element);
+            state.suggestion = "";
+        }
+
+        // If none of the above cases, request new suggestion
+        console.log("[AutoTab] Setting debounce timer for suggestion request.");
+        inputStateManager.setDebounceTimer(element, setTimeout(() => {
+            this.requestSuggestion(element, userText);
+        }, DEBOUNCE_DELAY));
     }
 
     static handleKeydown(event, element) {
@@ -282,8 +307,8 @@ class AutoTab {
         }
 
         try {
-            const suggestion = await this.getAISuggestion(userText);
-
+            const suggestion = await this.getAISuggestion(userText, element);
+            
             if (suggestion) {
                 state.suggestion = suggestion;
                 state.cachedResponse = userText;
@@ -321,9 +346,47 @@ class AutoTab {
         element.dispatchEvent(new Event('input', {bubbles: true}));
     }
 
-    static async getAISuggestion(text) {
+    static getElementContext(element) {
         try {
-            const response = await chrome.runtime.sendMessage({action: "generate_suggestion", text});
+            // Get labels associated with the element
+            let labels = [];
+            if (element.id) {
+                const labelElement = document.querySelector(`label[for="${element.id}"]`);
+                if (labelElement) {
+                    labels.push(labelElement.textContent.trim());
+                }
+            }
+            
+            // Get placeholder
+            if (element.placeholder) {
+                labels.push(element.placeholder);
+            }
+
+            return {
+                url: window.location.href,
+                title: document.title,
+                path: window.location.pathname,
+                labels: labels.join(' ')
+            };
+        } catch (error) {
+            console.error("[AutoTab] Error getting context:", error);
+            return {
+                url: window.location.href,
+                title: document.title,
+                path: window.location.pathname,
+                labels: ''
+            };
+        }
+    }
+
+    static async getAISuggestion(text, element) {
+        try {
+            const context = this.getElementContext(element);
+            const response = await chrome.runtime.sendMessage({
+                action: "generate_suggestion", 
+                text,
+                context
+            });
             console.log("[AutoTab] AI suggestion response:", response);
             if (response && response.suggestion) {
                 return response.suggestion;

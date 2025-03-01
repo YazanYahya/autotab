@@ -85,25 +85,49 @@ function cleanCompletion(userText, completion) {
 }
 
 /**
- * Listen for messages from content scripts: { action: "generate_suggestion", text: "<userText>" }
+ * Listen for messages from content scripts: { action: "generate_suggestion", text: "<userText>", context: "<context>" }
  */
-chrome.runtime.onMessage.addListener((req, sender, sendResponse) => {
-    if (req.action === "generate_suggestion") {
-        const userText = req.text || "";
-        console.log("[AutoTab Gemini] generate_suggestion request:", userText);
-
-        // Call the Gemini API asynchronously
-        getGeminiResponse(ASSISTANT_PROMPT, userText)
-            .then((aiCompletion) => {
-                // Send completion back to content script
-                sendResponse({suggestion: aiCompletion});
-            })
-            .catch((err) => {
-                console.error("[AutoTab Gemini] Gemini API call error:", err);
-                sendResponse({suggestion: ""});
+chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+    if (request.action === "generate_suggestion") {
+        handleSuggestionRequest(request.text, request.context)
+            .then(sendResponse)
+            .catch(error => {
+                console.error("Error generating suggestion:", error);
+                sendResponse({error: error.message});
             });
 
-        // Must return true to indicate we will call sendResponse asynchronously
         return true;
     }
 });
+
+async function handleSuggestionRequest(text, context) {
+    try {
+        // Format user prompt with context and input
+        const userPrompt = formatPromptWithContext(text, context);
+
+        // Get completion using existing getGeminiResponse function
+        const completion = await getGeminiResponse(ASSISTANT_PROMPT, userPrompt);
+
+        // Clean and return the completion
+        const cleanedCompletion = cleanCompletion(text, completion);
+        return {suggestion: cleanedCompletion};
+    } catch (error) {
+        console.error("[AutoTab Gemini] API call failed:", error);
+        throw error;
+    }
+}
+
+function formatPromptWithContext(text, context) {
+    // Format context with XML tags
+    return `
+<context>
+    <url>${context.url}</url>
+    <title>${context.title}</title>
+    <path>${context.path}</path>
+    <labels>${context.labels}</labels>
+</context>
+
+<input>${text}</input>
+
+Continue the text naturally, considering the context above.`.trim();
+}
